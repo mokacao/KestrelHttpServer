@@ -49,9 +49,10 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Transport.Libuv.Internal
                 {
                     if (!buffer.IsEmpty)
                     {
-                        var writeReq = _writeReqPool.Allocate();
+                        var entry = _writeReqPool.Allocate();
+                        var writeReq = entry.Request;
                         var writeResult = await writeReq.WriteAsync(_socket, buffer);
-                        _writeReqPool.Return(writeReq);
+                        _writeReqPool.Return(ref entry);
 
                         OnWriteCompleted(writeResult.Status, writeResult.Error);
                     }

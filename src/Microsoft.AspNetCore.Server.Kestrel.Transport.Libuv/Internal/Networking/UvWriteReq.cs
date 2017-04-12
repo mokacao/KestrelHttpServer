@@ -29,6 +29,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Transport.Libuv.Internal.Networkin
 
         public UvWriteReq(ILibuvTrace logger) : base(logger)
         {
+            // Pin();
         }
 
         public void Init(UvLoopHandle loop)
@@ -63,8 +64,6 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Transport.Libuv.Internal.Networkin
             try
             {
                 // add GCHandle to keeps this SafeHandle alive while request processing
-                _pins.Add(GCHandle.Alloc(this, GCHandleType.Normal));
-
                 var nBuffers = 0;
                 if (buffer.IsSingleSpan)
                 {
@@ -158,8 +157,6 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Transport.Libuv.Internal.Networkin
             try
             {
                 // add GCHandle to keeps this SafeHandle alive while request processing
-                _pins.Add(GCHandle.Alloc(this, GCHandleType.Normal));
-
                 var pBuffers = (LibuvFunctions.uv_buf_t*)_bufs;
                 var nBuffers = bufs.Count;
                 if (nBuffers > BUFFER_COUNT)
@@ -223,6 +220,12 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Transport.Libuv.Internal.Networkin
                 handleList[i].Free();
             }
             handleList.Clear();
+        }
+
+        protected override bool ReleaseHandle()
+        {
+            // Unpin();
+            return base.ReleaseHandle();
         }
 
         private static void UvWriteCb(IntPtr ptr, int status)

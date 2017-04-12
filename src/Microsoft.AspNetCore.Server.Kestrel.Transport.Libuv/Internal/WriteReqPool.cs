@@ -2,7 +2,6 @@
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
 using System;
-using System.Collections.Generic;
 using Microsoft.AspNetCore.Server.Kestrel.Transport.Libuv.Internal.Networking;
 
 namespace Microsoft.AspNetCore.Server.Kestrel.Transport.Libuv.Internal
@@ -12,7 +11,9 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Transport.Libuv.Internal
         private const int _maxPooledWriteReqs = 1024;
 
         private readonly LibuvThread _thread;
-        private readonly Queue<UvWriteReq> _pool = new Queue<UvWriteReq>(_maxPooledWriteReqs);
+        private UvWriteReqEntry[] _pool;
+        private int _nextFreeSlot = -1;
+
         private readonly ILibuvTrace _log;
         private bool _disposed;
 
@@ -22,42 +23,57 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Transport.Libuv.Internal
             _log = log;
         }
 
-        public UvWriteReq Allocate()
+        public UvWriteReqEntry Allocate()
         {
             if (_disposed)
             {
                 throw new ObjectDisposedException(GetType().Name);
             }
 
-            UvWriteReq req;
-            if (_pool.Count > 0)
+            if (_nextFreeSlot != -1)
             {
-                req = _pool.Dequeue();
+                var entry = _pool[_nextFreeSlot];
+                entry.Used = true;
+                return entry;
+            }
+
+            var start = 0;
+            // Initial pool
+            if (_pool == null)
+            {
+                _pool = new UvWriteReqEntry[_maxPooledWriteReqs];
             }
             else
             {
-                req = new UvWriteReq(_log);
-                req.Init(_thread.Loop);
+                // Double the size of the pool (should be rare hopefully), today
+                // we don't do any shrinking
+                var old = _pool;
+                _pool = new UvWriteReqEntry[_maxPooledWriteReqs * 2];
+                Array.Copy(old, 0, _pool, 0, old.Length);
+                start = old.Length;
             }
 
-            return req;
+            for (int i = start; i < _maxPooledWriteReqs; i++)
+            {
+                var req = new UvWriteReq(_log);
+                req.Init(_thread.Loop);
+                _pool[i] = new UvWriteReqEntry(req, i);
+            }
+
+            _nextFreeSlot = start + 1;
+            _pool[start].Used = true;
+            return _pool[start];
         }
 
-        public void Return(UvWriteReq req)
+        public void Return(ref UvWriteReqEntry entry)
         {
             if (_disposed)
             {
                 throw new ObjectDisposedException(GetType().Name);
             }
 
-            if (_pool.Count < _maxPooledWriteReqs)
-            {
-                _pool.Enqueue(req);
-            }
-            else
-            {
-                req.Dispose();
-            }
+            entry.Used = false;
+            _nextFreeSlot = entry.Index;
         }
 
         public void Dispose()
@@ -66,10 +82,26 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Transport.Libuv.Internal
             {
                 _disposed = true;
 
-                while (_pool.Count > 0)
+                for (int i = 0; i < _pool.Length; i++)
                 {
-                    _pool.Dequeue().Dispose();
+                    _pool[i].Request.Dispose();
                 }
+
+                _pool = null;
+            }
+        }
+
+        public struct UvWriteReqEntry
+        {
+            public UvWriteReq Request;
+            public bool Used;
+            public int Index;
+
+            public UvWriteReqEntry(UvWriteReq req, int index)
+            {
+                Request = req;
+                Used = false;
+                Index = index;
             }
         }
     }
